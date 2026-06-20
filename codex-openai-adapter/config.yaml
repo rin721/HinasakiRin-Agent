@@ -1,0 +1,15 @@
+server:
+  port: 8788
+
+gateway:
+  api_token: local-api-token
+
+codex:
+  safe_workdir: ./codex-workdir
+  timeout_seconds: 120
+  binary: codex
+  default_model: ""
+  service_tier: fast
+  model_reasoning_effort: ""
+  max_images: 10
+  max_image_bytes: 20971520

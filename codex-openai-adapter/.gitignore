@@ -1,0 +1,26 @@
+bin/
+dist/
+build/
+coverage/
+*.exe
+*.test
+*.out
+*.log
+
+.env
+.env.*
+config.local.yaml
+
+codex-workdir/
+
+# Keep auth and token material out of Git.
+auth.json
+*.token
+*.tokens
+*.key
+*.pem
+*.secret
+tokens/
+auth/
+local-auth/
+.codex/
