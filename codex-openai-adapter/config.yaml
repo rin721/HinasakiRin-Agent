@@ -1,5 +1,6 @@
 server:
   port: 8788
+  host: 0.0.0.0
 
 gateway:
   api_token: local-api-token
@@ -8,8 +9,8 @@ codex:
   safe_workdir: ./codex-workdir
   timeout_seconds: 120
   binary: codex
-  default_model: ""
+  default_model: "gpt-5.4-mini"
   service_tier: fast
-  model_reasoning_effort: "high" # none minimal low medium high xhigh
+  model_reasoning_effort: "high" # 模型推理 没有/none 不知道/minimal 低/low 中/medium 高/high 超高/xhigh
   max_images: 10
   max_image_bytes: 20971520

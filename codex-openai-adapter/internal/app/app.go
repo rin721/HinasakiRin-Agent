@@ -13,7 +13,6 @@ import (
 
 // App 是整个 HTTP 服务的组合根。
 //
-// 学习重点：
 // main.go 只负责加载配置和启动；真正的依赖组装放在 app.New。
 // 这样可以把“启动入口”和“业务模块怎么连起来”分开。
 type App struct {
@@ -53,10 +52,9 @@ func New(cfg appconfig.Config) (*App, error) {
 	}, nil
 }
 
-// Run 只监听 127.0.0.1，避免默认暴露到局域网。
-// 这个 adapter 的定位是 local-only 学习服务，不是生产网关。
+// Run 监听 配置的 Host 和 Port，启动 HTTP 服务。
 func (a *App) Run() error {
-	return a.engine.Run(fmt.Sprintf("127.0.0.1:%d", a.config.Server.Port))
+	return a.engine.Run(fmt.Sprintf("%s:%d", a.config.Server.Host, a.config.Server.Port))
 }
 
 // Engine 暴露 Gin engine，主要方便测试或未来嵌入其它启动方式。

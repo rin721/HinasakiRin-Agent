@@ -17,7 +17,8 @@ type Config struct {
 
 // ServerConfig 控制本地 HTTP 服务。
 type ServerConfig struct {
-	Port int `mapstructure:"port"`
+	Port int    `mapstructure:"port"`
+	Host string `mapstructure:"host"`
 }
 
 // GatewayConfig 控制 OpenAI-compatible 网关层。
