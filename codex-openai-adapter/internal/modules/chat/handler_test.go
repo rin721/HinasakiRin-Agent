@@ -106,6 +106,68 @@ func TestChatCompletionsUsesDefaultModelForAuto(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsAcceptsReasoningEffort(t *testing.T) {
+	runner := &fakeRunner{}
+	engine := newTestEngine(runner)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/completions", strings.NewReader(`{
+		"model": "auto",
+		"messages": [{ "role": "user", "content": "hello" }],
+		"reasoning_effort": "high"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if runner.lastRequest.ReasoningEffort != "high" {
+		t.Fatalf("expected reasoning_effort to be passed through, got %q", runner.lastRequest.ReasoningEffort)
+	}
+}
+
+func TestChatCompletionsAcceptsReasoningObject(t *testing.T) {
+	runner := &fakeRunner{}
+	engine := newTestEngine(runner)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/completions", strings.NewReader(`{
+		"model": "auto",
+		"messages": [{ "role": "user", "content": "hello" }],
+		"reasoning": { "effort": "xhigh", "summary": "auto" }
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if runner.lastRequest.ReasoningEffort != "xhigh" {
+		t.Fatalf("expected reasoning.effort to be passed through, got %q", runner.lastRequest.ReasoningEffort)
+	}
+}
+
+func TestChatCompletionsRejectsUnsupportedReasoningEffort(t *testing.T) {
+	engine := newTestEngine(&fakeRunner{})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/completions", strings.NewReader(`{
+		"model": "auto",
+		"messages": [{ "role": "user", "content": "hello" }],
+		"reasoning_effort": "minimal"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "reasoning effort") {
+		t.Fatalf("unexpected error: %s", recorder.Body.String())
+	}
+}
+
 func TestChatCompletionsRejectsNGreaterThanOne(t *testing.T) {
 	engine := newTestEngine(&fakeRunner{})
 

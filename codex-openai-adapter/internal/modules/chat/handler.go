@@ -68,9 +68,10 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 
 	modelForExec, responseModel := h.resolveModel(req.Model)
 	runnerReq := codex.Request{
-		Prompt: promptInput.Prompt,
-		Model:  modelForExec,
-		Images: toCodexImages(promptInput.Images),
+		Prompt:          promptInput.Prompt,
+		Model:           modelForExec,
+		ReasoningEffort: req.ResolvedReasoningEffort(),
+		Images:          toCodexImages(promptInput.Images),
 	}
 
 	if req.Stream {

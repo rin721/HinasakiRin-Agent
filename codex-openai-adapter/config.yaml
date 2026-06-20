@@ -10,6 +10,6 @@ codex:
   binary: codex
   default_model: ""
   service_tier: fast
-  model_reasoning_effort: ""
+  model_reasoning_effort: "high" # none minimal low medium high xhigh
   max_images: 10
   max_image_bytes: 20971520

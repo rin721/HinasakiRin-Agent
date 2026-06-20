@@ -27,9 +27,10 @@ type Runner struct {
 }
 
 type Request struct {
-	Prompt string
-	Model  string
-	Images []ImageAttachment
+	Prompt          string
+	Model           string
+	ReasoningEffort string
+	Images          []ImageAttachment
 }
 
 type ImageAttachment struct {
@@ -91,7 +92,7 @@ func (r *Runner) Complete(ctx context.Context, req Request) (CompletionResult, e
 	}
 	defer cleanup()
 
-	cmd := exec.CommandContext(execCtx, r.binary, r.buildExecArgs(req.Model, false, imagePaths)...)
+	cmd := exec.CommandContext(execCtx, r.binary, r.buildExecArgs(req.Model, req.ReasoningEffort, false, imagePaths)...)
 	cmd.Stdin = strings.NewReader(req.Prompt)
 
 	var stdout bytes.Buffer
@@ -132,7 +133,7 @@ func (r *Runner) Stream(ctx context.Context, req Request, emit func(StreamEvent)
 	}
 	defer cleanup()
 
-	cmd := exec.CommandContext(execCtx, r.binary, r.buildExecArgs(req.Model, true, imagePaths)...)
+	cmd := exec.CommandContext(execCtx, r.binary, r.buildExecArgs(req.Model, req.ReasoningEffort, true, imagePaths)...)
 	cmd.Stdin = strings.NewReader(req.Prompt)
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -211,7 +212,7 @@ func (r *Runner) Models(ctx context.Context) ([]ModelInfo, error) {
 	return catalog.Models, nil
 }
 
-func (r *Runner) buildExecArgs(model string, stream bool, imagePaths []string) []string {
+func (r *Runner) buildExecArgs(model string, reasoningEffort string, stream bool, imagePaths []string) []string {
 	args := []string{
 		"exec",
 		"--cd", r.safeWorkdir,
@@ -221,8 +222,11 @@ func (r *Runner) buildExecArgs(model string, stream bool, imagePaths []string) [
 	if r.serviceTier != "" {
 		args = append(args, "--config", fmt.Sprintf("service_tier=%q", r.serviceTier))
 	}
-	if r.reasoningEffort != "" {
-		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", r.reasoningEffort))
+	if reasoningEffort == "" {
+		reasoningEffort = r.reasoningEffort
+	}
+	if reasoningEffort != "" {
+		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", reasoningEffort))
 	}
 	args = append(args,
 		"--ignore-user-config",

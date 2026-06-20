@@ -50,17 +50,25 @@ func (c MessageContent) IsZero() bool {
 }
 
 type CompletionRequest struct {
-	Model       string          `json:"model"`
-	Messages    []Message       `json:"messages"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	MaxTokens   *int            `json:"max_tokens,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	Stop        json.RawMessage `json:"stop,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
-	N           *int            `json:"n,omitempty"`
-	Tools       json.RawMessage `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
-	User        string          `json:"user,omitempty"`
+	Model           string            `json:"model"`
+	Messages        []Message         `json:"messages"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	MaxTokens       *int              `json:"max_tokens,omitempty"`
+	TopP            *float64          `json:"top_p,omitempty"`
+	Stop            json.RawMessage   `json:"stop,omitempty"`
+	Stream          bool              `json:"stream,omitempty"`
+	N               *int              `json:"n,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	Reasoning       *ReasoningOptions `json:"reasoning,omitempty"`
+	Tools           json.RawMessage   `json:"tools,omitempty"`
+	ToolChoice      json.RawMessage   `json:"tool_choice,omitempty"`
+	User            string            `json:"user,omitempty"`
+}
+
+type ReasoningOptions struct {
+	Effort          string `json:"effort,omitempty"`
+	Summary         string `json:"summary,omitempty"`
+	GenerateSummary string `json:"generate_summary,omitempty"`
 }
 
 func (r CompletionRequest) Validate() error {
@@ -72,6 +80,9 @@ func (r CompletionRequest) Validate() error {
 	}
 	if r.N != nil && *r.N != 1 {
 		return fmt.Errorf("n values other than 1 are not supported")
+	}
+	if effort := r.ResolvedReasoningEffort(); effort != "" && !isSupportedReasoningEffort(effort) {
+		return fmt.Errorf("reasoning effort %q is not supported by the Codex CLI adapter; use low, medium, high, or xhigh", effort)
 	}
 
 	for i, message := range r.Messages {
@@ -86,6 +97,25 @@ func (r CompletionRequest) Validate() error {
 	}
 
 	return nil
+}
+
+func (r CompletionRequest) ResolvedReasoningEffort() string {
+	if strings.TrimSpace(r.ReasoningEffort) != "" {
+		return strings.TrimSpace(r.ReasoningEffort)
+	}
+	if r.Reasoning != nil {
+		return strings.TrimSpace(r.Reasoning.Effort)
+	}
+	return ""
+}
+
+func isSupportedReasoningEffort(value string) bool {
+	switch value {
+	case "low", "medium", "high", "xhigh":
+		return true
+	default:
+		return false
+	}
 }
 
 type CompletionResponse struct {

@@ -45,7 +45,7 @@ func TestBuildExecArgsIncludesModelStreamAndImages(t *testing.T) {
 		reasoningEffort: "high",
 	}
 
-	args := runner.buildExecArgs("gpt-5.4-mini", true, []string{"C:/tmp/codex-workdir/attachments/1/image-1.png"})
+	args := runner.buildExecArgs("gpt-5.4-mini", "", true, []string{"C:/tmp/codex-workdir/attachments/1/image-1.png"})
 	joined := strings.Join(args, "\n")
 
 	for _, expected := range []string{
@@ -63,6 +63,23 @@ func TestBuildExecArgsIncludesModelStreamAndImages(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("args omitted %q: %#v", expected, args)
 		}
+	}
+}
+
+func TestBuildExecArgsRequestReasoningOverridesDefault(t *testing.T) {
+	runner := &Runner{
+		safeWorkdir:     "C:/tmp/codex-workdir",
+		timeout:         time.Second,
+		reasoningEffort: "medium",
+	}
+
+	args := runner.buildExecArgs("gpt-5.4-mini", "xhigh", false, nil)
+	joined := strings.Join(args, "\n")
+	if !strings.Contains(joined, "--config\nmodel_reasoning_effort=\"xhigh\"") {
+		t.Fatalf("request reasoning effort did not override default: %#v", args)
+	}
+	if strings.Contains(joined, "model_reasoning_effort=\"medium\"") {
+		t.Fatalf("default reasoning effort leaked after request override: %#v", args)
 	}
 }
 

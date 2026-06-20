@@ -78,6 +78,27 @@ curl http://localhost:8788/v1/chat/completions \
   -d '{"model":"auto","messages":[{"role":"user","content":"Reply exactly: OK"}],"stream":true}'
 ```
 
+Per-request reasoning effort:
+
+```bash
+curl http://localhost:8788/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer local-api-token" \
+  -d '{"model":"gpt-5.4-mini","messages":[{"role":"user","content":"Reply exactly: OK"}],"reasoning_effort":"high"}'
+```
+
+The adapter also accepts the Responses-style shape on chat requests:
+
+```json
+{
+  "reasoning": {
+    "effort": "high"
+  }
+}
+```
+
+Supported Codex CLI reasoning values are `low`, `medium`, `high`, and `xhigh`.
+
 ## TypeScript Agent Config
 
 Use this adapter from `mini-coding-agent` with:
