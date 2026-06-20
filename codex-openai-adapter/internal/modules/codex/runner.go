@@ -18,6 +18,14 @@ import (
 	appconfig "codex-openai-adapter/internal/modules/config"
 )
 
+// Runner 是 Codex CLI 的薄封装。
+//
+// 它刻意只做三件事：
+// 1. 组装安全的 codex exec / codex debug models 命令。
+// 2. 把图片附件写成临时文件，交给 --image 参数。
+// 3. 把 Codex stdout / JSONL 转成上层可以理解的结果。
+//
+// 它不理解 HTTP，也不理解 OpenAI JSON 协议；这些属于 chat.Handler。
 type Runner struct {
 	binary          string
 	safeWorkdir     string
@@ -26,6 +34,8 @@ type Runner struct {
 	reasoningEffort string
 }
 
+// Request 是 chat 层传给 Codex CLI 的“已转换请求”。
+// Prompt 已经是纯文本；Images 也已经是通过 data URL 解码后的二进制。
 type Request struct {
 	Prompt          string
 	Model           string
@@ -33,21 +43,27 @@ type Request struct {
 	Images          []ImageAttachment
 }
 
+// ImageAttachment 是 Runner 要落盘后传给 `codex exec --image` 的图片。
 type ImageAttachment struct {
 	Name string
 	Data []byte
 }
 
+// CompletionResult 是非流式 codex exec 的输出。
 type CompletionResult struct {
 	Content string
 }
 
+// StreamEvent 是 Runner 对 Codex JSONL 事件的简化。
+// 上层 Handler 不需要知道 Codex 的原始事件结构，只需要 content/done 这种概念。
 type StreamEvent struct {
 	Type  string
 	Text  string
 	Usage *Usage
 }
 
+// Usage 对应 Codex JSONL 中 turn.completed 里的 usage。
+// 当前 HTTP 层暂时不回传 usage，但保留它方便后续扩展。
 type Usage struct {
 	InputTokens           int `json:"input_tokens"`
 	CachedInputTokens     int `json:"cached_input_tokens"`
@@ -55,6 +71,7 @@ type Usage struct {
 	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
 }
 
+// ModelInfo 是 `codex debug models` 返回 catalog 中对 adapter 有用的字段。
 type ModelInfo struct {
 	Slug             string   `json:"slug"`
 	DisplayName      string   `json:"display_name"`
@@ -67,6 +84,8 @@ type ModelInfo struct {
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
+// NewRunner 根据配置创建 Runner，并提前准备安全工作目录。
+// 这里会拒绝非 codex-workdir 目录，避免把 adapter 误指到用户代码仓库。
 func NewRunner(cfg appconfig.CodexConfig) (*Runner, error) {
 	workdir, err := prepareSafeWorkdir(cfg.SafeWorkdir)
 	if err != nil {
@@ -82,10 +101,18 @@ func NewRunner(cfg appconfig.CodexConfig) (*Runner, error) {
 	}, nil
 }
 
+// Complete 执行非流式请求。
+//
+// 映射关系：
+// OpenAI non-streaming request -> codex exec -> stdout -> assistant.content
+//
+// prompt 通过 stdin 输入，避免出现在命令行参数、shell history 或进程列表中。
 func (r *Runner) Complete(ctx context.Context, req Request) (CompletionResult, error) {
 	execCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	// Codex CLI 的 --image 需要文件路径，所以先把内存图片写到安全临时目录。
+	// cleanup 用 defer 保证请求结束后删除附件。
 	imagePaths, cleanup, err := r.writeAttachments(req.Images)
 	if err != nil {
 		return CompletionResult{}, err
@@ -100,6 +127,7 @@ func (r *Runner) Complete(ctx context.Context, req Request) (CompletionResult, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// cmd.Run 会等待进程结束。超时由 exec.CommandContext 的 context 控制。
 	err = cmd.Run()
 	cleanStdout := strings.TrimSpace(stripANSI(stdout.String()))
 	cleanStderr := strings.TrimSpace(stripANSI(stderr.String()))
@@ -123,6 +151,14 @@ func (r *Runner) Complete(ctx context.Context, req Request) (CompletionResult, e
 	return CompletionResult{Content: cleanStdout}, nil
 }
 
+// Stream 执行流式请求。
+//
+// Codex CLI 的流式模式不是 OpenAI SSE，而是 JSONL：
+//
+//	{"type":"item.completed", ...}
+//	{"type":"turn.completed", ...}
+//
+// Runner 在这里逐行读取 JSONL，把有用事件翻译成 StreamEvent，再交给 Handler 生成 SSE。
 func (r *Runner) Stream(ctx context.Context, req Request, emit func(StreamEvent) error) error {
 	execCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -148,6 +184,7 @@ func (r *Runner) Stream(ctx context.Context, req Request, emit func(StreamEvent)
 		return fmt.Errorf("start codex exec: %w", err)
 	}
 
+	// 默认 Scanner token 太小，长消息可能被截断；这里提升到 10MB。
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
@@ -157,6 +194,7 @@ func (r *Runner) Stream(ctx context.Context, req Request, emit func(StreamEvent)
 		for _, event := range events {
 			if err := emit(event); err != nil {
 				emitErr = err
+				// 如果客户端断开或写 SSE 失败，停止底层 Codex 进程，避免后台继续跑。
 				if cmd.Process != nil {
 					_ = cmd.Process.Kill()
 				}
@@ -188,6 +226,8 @@ func (r *Runner) Stream(ctx context.Context, req Request, emit func(StreamEvent)
 	return nil
 }
 
+// Models 读取 Codex CLI 的模型目录。
+// 这个命令不会调用模型推理，只是把 CLI 看到的 catalog 转成结构体。
 func (r *Runner) Models(ctx context.Context) ([]ModelInfo, error) {
 	execCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -212,6 +252,15 @@ func (r *Runner) Models(ctx context.Context) ([]ModelInfo, error) {
 	return catalog.Models, nil
 }
 
+// buildExecArgs 是安全边界最集中的地方。
+//
+// 所有 codex exec 请求都必须：
+// - 在独立 codex-workdir 中运行，而不是用户项目目录。
+// - 使用 read-only sandbox。
+// - 使用 approval_policy="never"，避免非交互服务卡在确认提示。
+// - 通过 stdin 读取 prompt。
+//
+// model、reasoning、stream、image 都是可选能力，在这里追加。
 func (r *Runner) buildExecArgs(model string, reasoningEffort string, stream bool, imagePaths []string) []string {
 	args := []string{
 		"exec",
@@ -220,9 +269,11 @@ func (r *Runner) buildExecArgs(model string, reasoningEffort string, stream bool
 		"--config", `approval_policy="never"`,
 	}
 	if r.serviceTier != "" {
+		// service_tier 用配置固定下来，避免继承用户本机不兼容的 Codex 配置。
 		args = append(args, "--config", fmt.Sprintf("service_tier=%q", r.serviceTier))
 	}
 	if reasoningEffort == "" {
+		// 请求里的 reasoning_effort 优先；没有时才使用 config.yaml 的默认值。
 		reasoningEffort = r.reasoningEffort
 	}
 	if reasoningEffort != "" {
@@ -235,6 +286,7 @@ func (r *Runner) buildExecArgs(model string, reasoningEffort string, stream bool
 		"--color", "never",
 	)
 	if model != "" {
+		// model 为空时不传 --model，让 Codex CLI 使用自己的默认模型。
 		args = append(args, "--model", model)
 	}
 	if stream {
@@ -246,6 +298,11 @@ func (r *Runner) buildExecArgs(model string, reasoningEffort string, stream bool
 	return append(args, "-")
 }
 
+// writeAttachments 把图片写入 codex-workdir/attachments/<request>/。
+//
+// 为什么不直接让客户端传本地路径？
+// 因为 adapter 不应该替客户端读取任意本地文件。我们只接受请求体里的 base64 图片，
+// 写入受控目录，再把这个受控路径交给 Codex CLI。
 func (r *Runner) writeAttachments(images []ImageAttachment) ([]string, func(), error) {
 	if len(images) == 0 {
 		return nil, func() {}, nil
@@ -262,6 +319,7 @@ func (r *Runner) writeAttachments(images []ImageAttachment) ([]string, func(), e
 
 	paths := make([]string, 0, len(images))
 	for i, image := range images {
+		// filepath.Base 防御性地去掉潜在路径片段，确保文件只会写在 attachments 目录下。
 		name := filepath.Base(image.Name)
 		if name == "." || name == string(filepath.Separator) || name == "" {
 			name = fmt.Sprintf("image-%d", i+1)
@@ -277,6 +335,10 @@ func (r *Runner) writeAttachments(images []ImageAttachment) ([]string, func(), e
 	return paths, cleanup, nil
 }
 
+// parseJSONLine 把 Codex CLI --json 输出的一行转换成内部 StreamEvent。
+// 当前只关心两类事件：
+// - item.completed + agent_message：assistant 文本内容
+// - turn.completed：本轮结束和 usage
 func parseJSONLine(line string) []StreamEvent {
 	var envelope struct {
 		Type string `json:"type"`
@@ -302,6 +364,10 @@ func parseJSONLine(line string) []StreamEvent {
 	return nil
 }
 
+// prepareSafeWorkdir 准备 Codex CLI 的工作目录。
+//
+// 这里故意要求目录名必须是 codex-workdir，并且不能是 git repo。
+// 这个 adapter 的目标是“让 Codex 充当模型后端”，不是让 Codex 在用户项目里改文件。
 func prepareSafeWorkdir(rawPath string) (string, error) {
 	absolutePath, err := filepath.Abs(rawPath)
 	if err != nil {
@@ -323,10 +389,13 @@ func prepareSafeWorkdir(rawPath string) (string, error) {
 	return absolutePath, nil
 }
 
+// stripANSI 清理 Codex CLI 输出中的颜色控制符，避免 HTTP 响应里混入终端转义字符。
 func stripANSI(value string) string {
 	return ansiEscapePattern.ReplaceAllString(value, "")
 }
 
+// resolveCodexBinary 处理 Windows 上的一个细节：
+// `codex.ps1` 可能吞掉或改写参数，`codex.cmd` 对 Go exec 更稳定。
 func resolveCodexBinary(binary string) string {
 	if runtime.GOOS != "windows" || binary != "codex" {
 		return binary
@@ -339,6 +408,8 @@ func resolveCodexBinary(binary string) string {
 	return binary
 }
 
+// safeSummary 生成安全错误摘要。
+// stdout 可能包含用户 prompt 或模型输出，因此非 0 退出时默认不回显 stdout。
 func safeSummary(stderr string, stdout string) string {
 	if stderr != "" {
 		return summarizeDiagnostics(stderr)
@@ -349,6 +420,8 @@ func safeSummary(stderr string, stdout string) string {
 	return "no output"
 }
 
+// summarizeDiagnostics 只保留 stderr 中看起来像 WARN/ERROR 的行。
+// 这样能给调用方足够的诊断信息，同时降低泄露 prompt 或本地环境信息的概率。
 func summarizeDiagnostics(output string) string {
 	lines := strings.Split(stripANSI(output), "\n")
 	kept := make([]string, 0, len(lines))
@@ -371,6 +444,7 @@ func summarizeDiagnostics(output string) string {
 	return truncate(strings.Join(kept, "\n"), 1000)
 }
 
+// truncate 控制错误信息长度，避免把过长诊断直接塞进 HTTP 响应。
 func truncate(value string, maxLength int) string {
 	value = strings.TrimSpace(value)
 	if len(value) <= maxLength {
